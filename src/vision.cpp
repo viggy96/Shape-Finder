@@ -2,16 +2,16 @@
 #include <cstdio>
 #include <ctime>
 #include <cmath>
-//#include <thread>
-//#include <boost/array.hpp>
-//#include <boost/asio.hpp>
+#include <thread>
+#include <boost/array.hpp>
+#include <boost/asio.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
 using namespace cv;
 using namespace std;
-//using namespace boost::asio::ip;
+using namespace boost::asio::ip;
 
 VideoCapture camera;
 Mat frame;
@@ -28,6 +28,7 @@ int lowV = 0, highV = 255;
 int minContourSize = 25;
 double image_t = 0, threshold_t = 0;
 const double PI = 3.14159265358979323846264338328;
+int num_threads;
 
 void thresh_callback(int, void*);
 double rectangularity(vector<Point>, Rect);
@@ -123,7 +124,7 @@ void thresh_callback(int, void*) {
   Scalar contour_colour(0, 0, 255);
   Scalar bound_colour(0, 255, 0);
 
-  //#pragma omp parallel for
+  #pragma omp parallel for
   for (int i = 0; i < contours.size(); i++) {
     approxPolyDP(contours[i], contours_poly[i], 3, true);
     int horizontal, vertical;
@@ -137,7 +138,8 @@ void thresh_callback(int, void*) {
     boundRect[i] = boundingRect((Mat)contours_poly[i]);
     float aspect_ratio = boundRect[i].width / boundRect[i].height;
 
-    bool isCircle = (circularity(temp_contour_poly_circle, radius[i]) > rectangularity(temp_contour_poly_rect, boundRect[i])) && (temp_contour_poly_circle.size() > 50) || !(abs(temp_contour_poly_rect.size() - 4) <= 1);
+    bool isCircle = (circularity(temp_contour_poly_circle, radius[i]) > rectangularity(temp_contour_poly_rect, boundRect[i])) &&
+      (temp_contour_poly_circle.size() > 50) || !(abs(temp_contour_poly_rect.size() - 4) <= 1);
 
     if (contourArea(contours_poly[i], false) >= minContourSize && isContourConvex(contours_poly[i])) {
       if (isCircle && circularity(temp_contour_poly_circle, radius[i]) >= 60) {
