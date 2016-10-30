@@ -48,6 +48,7 @@ int main(int argc, char *argv[]) {
     address.append(argv[1]);
     address.append("video?x.mjpeg");
     camera = VideoCapture(address);
+    byColor = true;
   } else {
     byColor = true; //boost::starts_with(argv[1], "color");
     camera = VideoCapture(CV_CAP_ANY);
@@ -55,7 +56,7 @@ int main(int argc, char *argv[]) {
 
   boost::asio::io_service io_service;
   udp::resolver resolver(io_service);
-  udp::resolver::query query(udp::v4(), "localhost", "3290");
+  udp::resolver::query query(udp::v4(), argv[2], "3290");
   udp::endpoint receiver_endpoint = *resolver.resolve(query);
   udp::socket socket(io_service);
   socket.open(udp::v4());
@@ -117,9 +118,9 @@ void thresh_callback(int, void*) {
     GaussianBlur(frame_thresh, frame_thresh, Size(9, 9), 2, 2);
     HoughCircles(frame_thresh, circles, CV_HOUGH_GRADIENT,
       1, // accumulator resolution (size of image/2)
-      frame_thresh.rows/4, // min distance between two circles
+      frame_thresh.rows/8, // min distance between two circles
       thresh_max, // internal canny high threshold
-      50, // threshold for centre detection
+      35, // threshold for centre detection
       0, 1000); // min max radius, 0 is default
       namedWindow("Thresholded Image", CV_WINDOW_AUTOSIZE);
       imshow("Thresholded Image", frame_thresh);
@@ -133,18 +134,18 @@ void thresh_callback(int, void*) {
     GaussianBlur(frame_grey, frame_grey, Size(3, 3), 2, 2 );
     HoughCircles(frame_grey, circles, CV_HOUGH_GRADIENT,
       2, // accumulator resolution (size of image/2)
-      frame_grey.rows/8, // min distance between two circles
+      frame_grey.rows/4, // min distance between two circles
       thresh_max, // internal canny high threshold
       50, // threshold for centre detection
       0, 200); // min max radius, 0 is default
 
       // Detect edges using canny
-      threshold_t = (double)getTickCount();
       Canny(frame_grey, canny_output, thresh, thresh_max, 3);
       namedWindow("Canny", CV_WINDOW_AUTOSIZE);
       imshow("Canny", canny_output);
       drawing = Mat::zeros(canny_output.size(), CV_8UC3);
   }
+
 
   // Find contours
   findContours(canny_output, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
@@ -166,13 +167,10 @@ void thresh_callback(int, void*) {
     circle(drawing, centre, 3, Scalar(0,0,255), -1, 4, 0 );
     circle(drawing, centre, radius, Scalar(0,0,255), -1, 4, 0);
   }
-  //printf("%d\n", largest_circle.x);
-  //printf("%d\n", largest_circle.y);
   message += "circle: ";
   message += std::to_string(largest_circle.x);
   message += ", ";
   message += std::to_string(largest_circle.y);
-  //printf("%s\n", message.c_str());
   message += "\n";
 
   double largest_area = -1;
