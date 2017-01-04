@@ -12,6 +12,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/gpu/gpu.hpp>
 
 using namespace cv;
 using namespace std;
@@ -50,19 +51,21 @@ int main(int argc, char *argv[]) {
     camera = VideoCapture(address);
     byColor = true;
   } else {
-    byColor = true; //boost::starts_with(argv[1], "color");
     camera = VideoCapture(CV_CAP_ANY);
   }
 
-  boost::asio::io_service io_service;
-  udp::resolver resolver(io_service);
-  udp::resolver::query query(udp::v4(), argv[2], "3290");
-  udp::endpoint receiver_endpoint = *resolver.resolve(query);
-  udp::socket socket(io_service);
-  socket.open(udp::v4());
+  /*boost::asio::io_service io_service;
+  try {
+    udp::resolver resolver(io_service);
+    udp::resolver::query query(udp::v4(), argv[2], "3290");
+    udp::endpoint receiver_endpoint = *resolver.resolve(query);
+    udp::socket socket(io_service);
+    socket.open(udp::v4());
+  } catch (boost::system::system_error const &e) {
+    std::cout << e.what();
+  }*/
 
-  while (1) {
-    image_t = (double)getTickCount();
+  for (;;) {
     frameExists = camera.read(frame);
 
     if (!frameExists) {
@@ -75,8 +78,6 @@ int main(int argc, char *argv[]) {
       printf("\n");
       break;      // If you hit ESC key loop will break.
     }
-
-    image_t = ((double)getTickCount() - image_t)/getTickFrequency();
 
     namedWindow("Image", CV_WINDOW_AUTOSIZE);
     imshow("Image", frame);
@@ -96,8 +97,10 @@ int main(int argc, char *argv[]) {
     createTrackbar("Min Contour Size:", "Image", &minContourSize, 64);
 
     message = "";
+
+    #pragma omp task
     thresh_callback(0, 0);
-    socket.send_to(boost::asio::buffer(message), receiver_endpoint);
+    //socket.send_to(boost::asio::buffer(message), receiver_endpoint);
   }
 
   waitKey(0);
@@ -111,41 +114,19 @@ void thresh_callback(int, void*) {
   vector<Vec4i> hierarchy, lines;
   vector<Vec3f> circles;
 
-  if (byColor) {
-    cvtColor(frame, frame_hsv, COLOR_BGR2HSV); //Convert the captured frame from BGR to HSV
-    inRange(frame_hsv, Scalar(lowH, lowS, lowV), Scalar(highH, highS, highV), frame_thresh); //Threshold the image
-    denoiseMat(frame_thresh, 3);
-    GaussianBlur(frame_thresh, frame_thresh, Size(9, 9), 2, 2);
-    HoughCircles(frame_thresh, circles, CV_HOUGH_GRADIENT,
-      1, // accumulator resolution (size of image/2)
-      frame_thresh.rows/8, // min distance between two circles
-      thresh_max, // internal canny high threshold
-      35, // threshold for centre detection
-      0, 1000); // min max radius, 0 is default
-      namedWindow("Thresholded Image", CV_WINDOW_AUTOSIZE);
-      imshow("Thresholded Image", frame_thresh);
 
-      // Detect edges using canny
-      threshold_t = (double)getTickCount();
-      Canny(frame_thresh, canny_output, thresh, thresh_max, 3);
-      drawing = Mat::zeros(canny_output.size(), CV_8UC3);
-  } else {
-    cvtColor(frame, frame_grey, COLOR_BGR2GRAY); //Convert the captured frame from BGR to B&W
-    GaussianBlur(frame_grey, frame_grey, Size(3, 3), 2, 2 );
-    HoughCircles(frame_grey, circles, CV_HOUGH_GRADIENT,
-      2, // accumulator resolution (size of image/2)
-      frame_grey.rows/4, // min distance between two circles
-      thresh_max, // internal canny high threshold
-      50, // threshold for centre detection
-      0, 200); // min max radius, 0 is default
+  cvtColor(frame, frame_hsv, COLOR_BGR2HSV); //Convert the captured frame from BGR to HSV
+  inRange(frame_hsv, Scalar(lowH, lowS, lowV), Scalar(highH, highS, highV), frame_thresh); //Threshold the image
 
-      // Detect edges using canny
-      Canny(frame_grey, canny_output, thresh, thresh_max, 3);
-      namedWindow("Canny", CV_WINDOW_AUTOSIZE);
-      imshow("Canny", canny_output);
-      drawing = Mat::zeros(canny_output.size(), CV_8UC3);
-  }
+  //#pragma omp task
+  //denoiseMat(frame_thresh, 4);
+  //GaussianBlur(frame_thresh, frame_thresh, Size(3, 3), 2, 2);
+  namedWindow("Thresholded Image", CV_WINDOW_AUTOSIZE);
+  imshow("Thresholded Image", frame_thresh);
 
+  // Detect edges using canny
+  Canny(frame_thresh, canny_output, thresh, thresh_max, 3);
+  drawing = Mat::zeros(canny_output.size(), CV_8UC3);
 
   // Find contours
   findContours(canny_output, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
@@ -153,45 +134,43 @@ void thresh_callback(int, void*) {
   vector<vector<Point> > contours_poly(contours.size());
   vector<Point2f> centre(contours.size());
   vector<float> radius(contours.size());
-  Scalar contour_colour(0, 0, 255);
-  Scalar bound_colour(0, 255, 0);
+  Scalar circle_colour(0, 0, 255);
+  Scalar rect_colour(0, 255, 0);
 
   int largest_radius = -1;
   Point largest_circle;
-
-  #pragma omp parallel for
-  for (size_t i = 0; i < circles.size(); i++) {
-    Point centre(cvRound(circles[i][0]), cvRound(circles[i][1]));
-    int radius = cvRound(circles[i][2]);
-    if (radius > largest_radius) largest_circle = centre;
-    circle(drawing, centre, 3, Scalar(0,0,255), -1, 4, 0 );
-    circle(drawing, centre, radius, Scalar(0,0,255), -1, 4, 0);
-  }
-  message += "circle: ";
-  message += std::to_string(largest_circle.x);
-  message += ", ";
-  message += std::to_string(largest_circle.y);
-  message += "\n";
-
   double largest_area = -1;
   Point largest_rect;
 
-  #pragma omp parallel for
+  #pragma omp parallel for simd
   for (int i = 0; i < contours.size(); i++) {
-    approxPolyDP(contours[i], contours_poly[i], 0.04 * arcLength(contours[i], true), true);
-
-    vector<Point> temp_contour_circle = contours[i], temp_contour_poly_circle = contours_poly[i];
-    minEnclosingCircle((Mat)contours_poly[i], centre[i], radius[i]);
-    bool isCircle = (circularity(temp_contour_poly_circle, radius[i])) > 80;
-    if (!isContourConvex(contours_poly[i]) || isCircle)
-      continue;
+    #pragma omp task
+    approxPolyDP(contours[i], contours_poly[i], 0.012 * arcLength(contours[i], true), true);
     double area = contourArea(contours_poly[i]);
-    if (area > largest_area) {
-      Rect rect = boundingRect(contours_poly[i]);
-      largest_rect = Point((rect.x + rect.width)/2, (rect.y + rect.height)/2);
+    if (!isContourConvex(contours_poly[i]) || area < minContourSize) continue;
+
+    minEnclosingCircle((Mat)contours_poly[i], centre[i], radius[i]);
+    bool isCircle = (circularity(contours_poly[i], radius[i])) > 80;
+
+    Rect rect = boundingRect(contours_poly[i]);
+    bool isRect = (rectangularity(contours_poly[i], rect)) > 80;
+
+    if (contours_poly[i].size() != 4 || contours_poly[i].size() < 12 || !isRect || !isCircle) continue;
+
+    if (contours_poly[i].size() == 4 || isRect) {
+      if (area > largest_area) largest_rect = Point((rect.x + rect.width)/2, (rect.y + rect.height)/2);
+      drawContours(drawing, contours_poly, i, rect_colour,
+        -1, // line thickness
+        8, //line type
+        hierarchy,
+        0, //max level to draw
+        Point(0, 0)); // Point() offset
     }
-    if (contours_poly[i].size() == 4 && area >= minContourSize) {
-      drawContours(drawing, contours_poly, i, bound_colour,
+    if (contours_poly[i].size() >= 12 || isCircle) {
+      if (radius[i] > largest_radius) largest_circle = centre[i];
+      //circle(drawing, centre[i], 3, circle_colour, -1, 4, 0);
+      //circle(drawing, centre[i], radius[i], circle_colour, -1, 4, 0);
+      drawContours(drawing, contours_poly, i, circle_colour,
         -1, // line thickness
         8, //line type
         hierarchy,
@@ -199,19 +178,20 @@ void thresh_callback(int, void*) {
         Point(0, 0)); // Point() offset
     }
   }
+  message += "circle: ";
+  message += std::to_string(largest_circle.x);
+  message += ", ";
+  message += std::to_string(largest_circle.y);
+  message += "\n";
   message += "rect: ";
   message += std::to_string(largest_rect.x);
   message += ", ";
   message += std::to_string(largest_rect.y);
   message += "\n";
 
-  threshold_t = ((double)getTickCount() - threshold_t)/getTickFrequency();
-
   // Show contours in a window
   namedWindow("Shapes", CV_WINDOW_AUTOSIZE);
   imshow("Shapes", drawing);
-  //printf("\rImage FPS: %lf \t Contour FPS: %lf", 1/image_t, 1/threshold_t);
-
 }
 
 void denoiseMat(Mat frame, int structure_size) {
