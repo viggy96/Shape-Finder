@@ -155,7 +155,7 @@ void thresh_callback(int, void*) {
     Rect rect = boundingRect(contours_poly[i]);
     bool isRect = (rectangularity(contours_poly[i], rect)) > 80;
 
-    if (contours_poly[i].size() != 4 || contours_poly[i].size() < 12 || !isRect || !isCircle) continue;
+    if (contours_poly[i].size() != 4 && contours_poly[i].size() < 12 && !isRect && !isCircle) continue;
 
     if (contours_poly[i].size() == 4 || isRect) {
       if (area > largest_area) largest_rect = Point((rect.x + rect.width)/2, (rect.y + rect.height)/2);
